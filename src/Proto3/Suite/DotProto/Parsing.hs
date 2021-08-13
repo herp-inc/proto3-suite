@@ -249,6 +249,33 @@ wordc = try $ do
   guard (not (isSpace c) && c /= ';') <|> fail ("wordc: space or semicolon found: " ++ show c)
   pure c
 
+_pparse :: ProtoParser a -> String -> Either ParseError a
+_pparse p = parse (runProtoParser p) "<test>"
+
+_wordcEx :: Either ParseError Char
+_wordcEx = _pparse wordc "a ;"
+
+_wordEx :: Either ParseError String
+_wordEx = _pparse word "a ;"
+
+_someStatementEx :: [Either ParseError [String]]
+_someStatementEx =
+  map (_pparse someStatement)
+  [ ";"
+  , "a;"
+  , "optional Requiredness requiredness = 50001;"
+  ]
+
+_extensionEx :: [Either ParseError ()]
+_extensionEx =
+  map (_pparse extension)
+  ["extend google.protobuf.FieldOptions {  optional Validator validator = 50002; }"]
+
+_topStatementEx :: [Either ParseError DotProtoStatement]
+_topStatementEx =
+  map (_pparse topStatement)
+  ["extend google.protobuf.FieldOptions {  optional Validator validator = 50002; }"]
+
 --------------------------------------------------------------------------------
 -- options
 
