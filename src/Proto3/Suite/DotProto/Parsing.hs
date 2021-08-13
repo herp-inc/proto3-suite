@@ -33,6 +33,7 @@ import Proto3.Suite.DotProto.AST
 import Proto3.Wire.Types (FieldNumber(..))
 import Text.Parsec (parse, ParseError)
 import Text.Parsec.String (Parser)
+import qualified Text.Parsec as P
 import Text.Parser.Char
 import Text.Parser.Combinators
 import Text.Parser.LookAhead
@@ -252,29 +253,60 @@ wordc = try $ do
 _pparse :: ProtoParser a -> String -> Either ParseError a
 _pparse p = parse (runProtoParser p) "<test>"
 
-_wordcEx :: Either ParseError Char
-_wordcEx = _pparse wordc "a ;"
+_presult :: ProtoParser a -> String -> Either ParseError (a, String)
+_presult p = parse ((,) <$> (runProtoParser p) <*> P.getInput) "<test>"
 
-_wordEx :: Either ParseError String
-_wordEx = _pparse word "a ;"
+_wordcEx :: Either ParseError (Char, String)
+_wordcEx = _presult wordc "a ;"
 
-_someStatementEx :: [Either ParseError [String]]
+_wordEx :: Either ParseError (String, String)
+_wordEx = _presult word "a ;"
+
+_someStatementEx :: IO ()
 _someStatementEx =
-  map (_pparse someStatement)
+  mapM_ (print . _presult someStatement)
   [ ";"
   , "a;"
   , "optional Requiredness requiredness = 50001;"
+  , "  optional Requiredness requiredness = 50001;"
+  , "optional Requiredness requiredness = 50001;  "
   ]
 
-_extensionEx :: [Either ParseError ()]
-_extensionEx =
-  map (_pparse extension)
-  ["extend google.protobuf.FieldOptions {  optional Validator validator = 50002; }"]
+_someStatementsEx :: IO ()
+_someStatementsEx =
+  mapM_ (print . _presult (many someStatement))
+  [ "  optional Requiredness requiredness = 50001;"
+  , "  optional Requiredness requiredness = 50001;  optional Validator validator = 50002;"
+  ]
 
-_topStatementEx :: [Either ParseError DotProtoStatement]
+_bracesEx :: IO ()
+_bracesEx =
+  mapM_ (print . _presult (braces $ many someStatement))
+  [ "{;}"
+  , "{  optional Requiredness requiredness = 50001;  optional Validator validator = 50002; }" ]
+
+_extensionEx :: IO ()
+_extensionEx =
+  mapM_ (print . _presult extension)
+  [ "extend google.protobuf.FieldOptions {  optional Requiredness requiredness = 50001; }" ]
+
+_topStatementEx :: IO ()
 _topStatementEx =
-  map (_pparse topStatement)
-  ["extend google.protobuf.FieldOptions {  optional Validator validator = 50002; }"]
+  mapM_ (print . _presult topStatement)
+  [ "extend google.protobuf.FieldOptions {  optional Requiredness requiredness = 50001; }" ]
+
+_topStatementsEx :: IO ()
+_topStatementsEx =
+  mapM_ (print . _presult (many $ try topStatement))
+  [ ";"
+  , "extend google.protobuf.FieldOptions {  optional Requiredness requiredness = 50001; }\n ;"
+  ]
+
+_topStatement2Ex :: IO ()
+_topStatement2Ex =
+  mapM_ (print . _presult ((,) <$> topStatement <*> topStatement))
+  [ "extend google.protobuf.FieldOptions {  optional Requiredness requiredness = 50001; }\n;"
+  ]
 
 --------------------------------------------------------------------------------
 -- options
