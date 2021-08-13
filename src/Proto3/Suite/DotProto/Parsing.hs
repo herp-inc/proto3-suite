@@ -238,10 +238,17 @@ definition = message
 --------------------------------------------------------------------------------
 -- parser to skip extension
 extension :: ProtoParser ()
-extension = try (symbol "extend") *> identifier *> braces (many someStatement) *> pure ()
+extension = try (symbol "extend") *> identifier *> braces (many extensionStatement) *> pure ()
 
-someStatement :: ProtoParser [String]
-someStatement = whiteSpace *> many word <* semi
+extensionStatement :: ProtoParser ([String], FieldNumber)
+extensionStatement = do
+  whiteSpace
+  lhs <- many word
+  symbol "="
+  num <- fieldNumber
+  void $ optionAnnotation
+  semi
+  return $ (lhs, num)
 
 word :: ProtoParser String
 word = token $ some wordc
@@ -249,7 +256,7 @@ word = token $ some wordc
 wordc :: ProtoParser Char
 wordc = try $ do
   c <- anyChar
-  guard (not (isSpace c) && c `notElem` [';', '{', '}'])
+  guard (not (isSpace c) && c `notElem` ['=', ';', '{', '}', '[', ']'])
     <|> fail ("wordc: space or meta-characters found: " ++ show c)
   pure c
 
@@ -265,9 +272,9 @@ _wordcEx = _presult wordc "a ;"
 _wordEx :: Either ParseError (String, String)
 _wordEx = _presult word "a ;"
 
-_someStatementEx :: IO ()
-_someStatementEx =
-  mapM_ (print . _presult someStatement)
+_extensionStatementEx :: IO ()
+_extensionStatementEx =
+  mapM_ (print . _presult extensionStatement)
   [ ";"
   , "a;"
   , "optional Requiredness requiredness = 50001;"
@@ -275,16 +282,16 @@ _someStatementEx =
   , "optional Requiredness requiredness = 50001;  "
   ]
 
-_someStatementsEx :: IO ()
-_someStatementsEx =
-  mapM_ (print . _presult (many someStatement))
+_extensionStatementsEx :: IO ()
+_extensionStatementsEx =
+  mapM_ (print . _presult (many extensionStatement))
   [ "  optional Requiredness requiredness = 50001;"
   , "  optional Requiredness requiredness = 50001;  optional Validator validator = 50002;"
   ]
 
 _bracesEx :: IO ()
 _bracesEx =
-  mapM_ (print . _presult (braces $ many someStatement))
+  mapM_ (print . _presult (braces $ many extensionStatement))
   [ "{;}"
   , "{  optional Requiredness requiredness = 50001;  optional Validator validator = 50002; }" ]
 
