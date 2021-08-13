@@ -235,10 +235,17 @@ definition = message
 --------------------------------------------------------------------------------
 -- parser to skip extension
 extension :: ProtoParser ()
-extension = try (symbol "extend") *> identifier *> braces (many someStatement) *> pure ()
+extension = try (symbol "extend") *> identifier *> braces (many extensionStatement) *> pure ()
 
-someStatement :: ProtoParser [String]
-someStatement = whiteSpace *> many word <* semi
+extensionStatement :: ProtoParser ([String], FieldNumber)
+extensionStatement = do
+  whiteSpace
+  lhs <- many word
+  symbol "="
+  num <- fieldNumber
+  void $ optionAnnotation
+  semi
+  return $ (lhs, num)
 
 word :: ProtoParser String
 word = token $ some wordc
@@ -246,7 +253,7 @@ word = token $ some wordc
 wordc :: ProtoParser Char
 wordc = try $ do
   c <- anyChar
-  guard (not (isSpace c) && c `notElem` [';', '{', '}'])
+  guard (not (isSpace c) && c `notElem` ['=', ';', '{', '}', '[', ']'])
     <|> fail ("wordc: space or meta-characters found: " ++ show c)
   pure c
 
