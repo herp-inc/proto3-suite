@@ -26,6 +26,7 @@ import Control.Monad.Fail
 #endif
 import qualified Data.List.NonEmpty as NE
 import Data.Functor
+import Data.Char (isSpace)
 import qualified Data.Text as T
 import qualified Filesystem.Path.CurrentOS as FP
 import Proto3.Suite.DotProto.AST
@@ -177,6 +178,7 @@ data DotProtoStatement
   | DPSPackage    DotProtoPackageSpec
   | DPSImport     DotProtoImport
   | DPSDefinition DotProtoDefinition
+  | DPSExtension
   | DPSEmpty
   deriving Show
 
@@ -205,6 +207,7 @@ topStatement = DPSImport     <$> import_
            <|> DPSPackage    <$> package
            <|> DPSOption     <$> topOption
            <|> DPSDefinition <$> definition
+           <|> DPSExtension  <$  extension
            <|> DPSEmpty      <$  empty
 
 import_ :: ProtoParser DotProtoImport
@@ -226,6 +229,23 @@ definition :: ProtoParser DotProtoDefinition
 definition = message
          <|> enum
          <|> service
+
+--------------------------------------------------------------------------------
+-- parser to skip extension
+extension :: ProtoParser ()
+extension = try (symbol "extend") *> identifier *> braces (many $ try someStatement) *> pure ()
+
+someStatement :: ProtoParser [String]
+someStatement = whiteSpace *> many word <* semi
+
+word :: ProtoParser String
+word = token $ some wordc
+
+wordc :: ProtoParser Char
+wordc = try $ do
+  c <- anyChar
+  guard (not (isSpace c) && c /= ';') <|> fail ("wordc: space or semicolon found: " ++ show c)
+  pure c
 
 --------------------------------------------------------------------------------
 -- options
@@ -333,7 +353,7 @@ enumStatement = try (DotProtoEnumOption <$> topOption)
             <|> empty $> DotProtoEnumEmpty
 
 enum :: ProtoParser DotProtoDefinition
-enum = do symbol "enum"
+enum = do try $ symbol "enum"
           ename <- singleIdentifier
           ebody <- braces (many enumStatement)
           return $ DotProtoEnum mempty ename ebody
