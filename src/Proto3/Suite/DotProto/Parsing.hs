@@ -236,7 +236,7 @@ definition = message
 --------------------------------------------------------------------------------
 -- parser to skip extension
 extension :: ProtoParser ()
-extension = try (symbol "extend") *> identifier *> braces (many $ try someStatement) *> pure ()
+extension = try (symbol "extend") *> identifier *> braces (many someStatement) *> pure ()
 
 someStatement :: ProtoParser [String]
 someStatement = whiteSpace *> many word <* semi
@@ -247,7 +247,8 @@ word = token $ some wordc
 wordc :: ProtoParser Char
 wordc = try $ do
   c <- anyChar
-  guard (not (isSpace c) && c /= ';') <|> fail ("wordc: space or semicolon found: " ++ show c)
+  guard (not (isSpace c) && c `notElem` [';', '{', '}'])
+    <|> fail ("wordc: space or meta-characters found: " ++ show c)
   pure c
 
 _pparse :: ProtoParser a -> String -> Either ParseError a
