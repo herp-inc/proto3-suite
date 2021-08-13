@@ -113,9 +113,11 @@ globalIdentifier = token $ string "." >> _identifier
 nestedIdentifier :: ProtoParser DotProtoIdentifier
 nestedIdentifier = token $ do
   h <- parens _identifier
-  string "."
-  t <- _identifier
-  return $ Qualified h t
+  ( do string "."
+       t <- _identifier
+       return $ Qualified h t
+    <|>
+    do return h )
 
 ----------------------------------------
 -- values
