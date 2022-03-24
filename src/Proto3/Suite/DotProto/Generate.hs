@@ -22,6 +22,8 @@
 
 module Proto3.Suite.DotProto.Generate
   ( CompileError(..)
+  , TextType(..)
+  , parseTextType
   , TypeContext
   , CompileArgs(..)
   , compileDotProtoFile
@@ -72,7 +74,15 @@ data CompileArgs = CompileArgs
   , extraInstanceFiles :: [FilePath]
   , inputProto         :: FilePath
   , outputDir          :: FilePath
+  , textType           :: TextType
   }
+
+data TextType = StrictText | LazyText
+
+parseTextType :: String -> Either String TextType
+parseTextType "strict" = Right StrictText
+parseTextType "lazy" = Right LazyText
+parseTextType other = Left $ "expecting strict or lazy, but got " <> other
 
 -- | Generate a Haskell module corresponding to a @.proto@ file
 compileDotProtoFile :: CompileArgs -> IO (Either CompileError ())
@@ -86,7 +96,7 @@ compileDotProtoFile CompileArgs{..} = runExceptT $ do
   Turtle.mktree (Turtle.directory modulePath)
 
   extraInstances <- foldMapM getExtraInstances extraInstanceFiles
-  haskellModule <- renderHsModuleForDotProto extraInstances dotProto importTypeContext
+  haskellModule <- renderHsModuleForDotProto textType extraInstances dotProto importTypeContext
 
   liftIO (writeFile (Turtle.encodeString modulePath) haskellModule)
   where
@@ -156,9 +166,10 @@ renameProtoFile filename =
 --   messages and enums.
 renderHsModuleForDotProto
     :: MonadError CompileError m
-    => ([HsImportDecl],[HsDecl]) -> DotProto -> TypeContext -> m String
-renderHsModuleForDotProto extraInstanceFiles dotProto importCtxt = do
-    haskellModule <- hsModuleForDotProto extraInstanceFiles dotProto importCtxt
+    => TextType
+    -> ([HsImportDecl],[HsDecl]) -> DotProto -> TypeContext -> m String
+renderHsModuleForDotProto txtType extraInstanceFiles dotProto importCtxt = do
+    haskellModule <- hsModuleForDotProto txtType extraInstanceFiles dotProto importCtxt
     return (T.unpack header ++ "\n" ++ prettyPrint haskellModule)
   where
     header = [Neat.text|
@@ -180,7 +191,8 @@ renderHsModuleForDotProto extraInstanceFiles dotProto importCtxt = do
 -- Instances given in @eis@ override those otherwise generated.
 hsModuleForDotProto
     :: MonadError CompileError m
-    => ([HsImportDecl], [HsDecl])
+    => TextType
+    -> ([HsImportDecl], [HsDecl])
     -- ^ Extra user-define instances that override default generated instances
     -> DotProto
     -- ^
@@ -188,6 +200,7 @@ hsModuleForDotProto
     -- ^
     -> m HsModule
 hsModuleForDotProto
+    txtType
     (extraImports, extraInstances)
     dotProto@DotProto{ protoMeta = DotProtoMeta { metaModulePath = modulePath }
                      , protoPackage
@@ -202,7 +215,14 @@ hsModuleForDotProto
 
        let hasService = has (traverse._DotProtoService) protoDefinitions
 
-       let importDeclarations = concat [ defaultImports hasService, extraImports, typeContextImports ]
+       let importDeclarations = concat
+              [ defaultImports
+                ImportCustomisation
+                  { usesGrpc = hasService
+                  , ..
+                  }
+              , extraImports
+              , typeContextImports ]
 
        typeContext <- dotProtoTypeContext dotProto
 
@@ -1787,8 +1807,13 @@ dpPrimTypeE ty =
         Float    -> wrap "Float"
         Double   -> wrap "Double"
 
-defaultImports :: Bool -> [HsImportDecl]
-defaultImports usesGrpc =
+data ImportCustomisation = ImportCustomisation
+  { txtType :: TextType
+  , usesGrpc :: Bool
+  }
+
+defaultImports :: ImportCustomisation -> [HsImportDecl]
+defaultImports ImportCustomisation{..} =
     [ importDecl_ (m "Prelude")               & qualified haskellNS  & everything
     , importDecl_ (m "Proto3.Suite.Class")    & qualified protobufNS & everything
 #ifdef DHALL
@@ -1810,7 +1835,10 @@ defaultImports usesGrpc =
     , importDecl_ (m "Data.Map")              & qualified haskellNS  & selecting  [i"Map", i"mapKeysMonotonic"]
     , importDecl_ (m "Data.Proxy")            & qualified proxyNS    & everything
     , importDecl_ (m "Data.String")           & qualified haskellNS  & selecting  [i"fromString"]
-    , importDecl_ (m "Data.Text.Lazy")        & qualified haskellNS  & selecting  [i"Text"]
+    , importDecl_ (case txtType of
+      StrictText -> m "Data.Text"
+      LazyText -> m "Data.Text.Lazy")
+                                              & qualified haskellNS  & selecting  [i"Text"]
     , importDecl_ (m "Data.Vector")           & qualified haskellNS  & selecting  [i"Vector"]
     , importDecl_ (m "Data.Word")             & qualified haskellNS  & selecting  [i"Word16", i"Word32", i"Word64"]
     , importDecl_ (m "GHC.Enum")              & qualified haskellNS  & everything
