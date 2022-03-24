@@ -74,6 +74,7 @@ data CompileArgs = CompileArgs
   , extraInstanceFiles :: [FilePath]
   , inputProto         :: FilePath
   , outputDir          :: FilePath
+  , strictText         :: Bool
   }
 
 -- | Generate a Haskell module corresponding to a @.proto@ file
@@ -88,7 +89,7 @@ compileDotProtoFile CompileArgs{..} = runExceptT $ do
   Turtle.mktree (Turtle.directory modulePath)
 
   extraInstances <- foldMapM getExtraInstances extraInstanceFiles
-  haskellModule <- renderHsModuleForDotProto extraInstances dotProto importTypeContext
+  haskellModule <- renderHsModuleForDotProto strictText extraInstances dotProto importTypeContext
 
   liftIO (writeFile (FP.encodeString modulePath) haskellModule)
   where
@@ -158,9 +159,10 @@ renameProtoFile filename =
 --   messages and enums.
 renderHsModuleForDotProto
     :: MonadError CompileError m
-    => ([HsImportDecl],[HsDecl]) -> DotProto -> TypeContext -> m String
-renderHsModuleForDotProto extraInstanceFiles dotProto importCtxt = do
-    haskellModule <- hsModuleForDotProto extraInstanceFiles dotProto importCtxt
+    => Bool
+    -> ([HsImportDecl],[HsDecl]) -> DotProto -> TypeContext -> m String
+renderHsModuleForDotProto strictText extraInstanceFiles dotProto importCtxt = do
+    haskellModule <- hsModuleForDotProto strictText extraInstanceFiles dotProto importCtxt
     return (T.unpack header ++ "\n" ++ prettyPrint haskellModule)
   where
     header = [Neat.text|
@@ -182,7 +184,9 @@ renderHsModuleForDotProto extraInstanceFiles dotProto importCtxt = do
 -- Instances given in @eis@ override those otherwise generated.
 hsModuleForDotProto
     :: MonadError CompileError m
-    => ([HsImportDecl], [HsDecl])
+    => Bool
+    -- ^ Map string to strict Text
+    -> ([HsImportDecl], [HsDecl])
     -- ^ Extra user-define instances that override default generated instances
     -> DotProto
     -- ^
@@ -190,6 +194,7 @@ hsModuleForDotProto
     -- ^
     -> m HsModule
 hsModuleForDotProto
+    strictText
     (extraImports, extraInstances)
     dotProto@DotProto{ protoMeta = DotProtoMeta { metaModulePath = modulePath }
                      , protoPackage
@@ -204,7 +209,7 @@ hsModuleForDotProto
 
        let hasService = has (traverse._DotProtoService) protoDefinitions
 
-       let importDeclarations = concat [ defaultImports hasService, extraImports, typeContextImports ]
+       let importDeclarations = concat [ defaultImports strictText hasService, extraImports, typeContextImports ]
 
        typeContext <- dotProtoTypeContext dotProto
 
@@ -1787,8 +1792,8 @@ dpPrimTypeE ty =
         Float    -> wrap "Float"
         Double   -> wrap "Double"
 
-defaultImports :: Bool -> [HsImportDecl]
-defaultImports usesGrpc =
+defaultImports :: Bool -> Bool -> [HsImportDecl]
+defaultImports strictText usesGrpc =
     [ importDecl_ (m "Prelude")               & qualified haskellNS  & everything
     , importDecl_ (m "Proto3.Suite.Class")    & qualified protobufNS & everything
 #ifdef DHALL
@@ -1810,7 +1815,8 @@ defaultImports usesGrpc =
     , importDecl_ (m "Data.Map")              & qualified haskellNS  & selecting  [i"Map", i"mapKeysMonotonic"]
     , importDecl_ (m "Data.Proxy")            & qualified proxyNS    & everything
     , importDecl_ (m "Data.String")           & qualified haskellNS  & selecting  [i"fromString"]
-    , importDecl_ (m "Data.Text.Lazy")        & qualified haskellNS  & selecting  [i"Text"]
+    , importDecl_ (if strictText then m "Data.Text" else m "Data.Text.Lazy")
+                                              & qualified haskellNS  & selecting  [i"Text"]
     , importDecl_ (m "Data.Vector")           & qualified haskellNS  & selecting  [i"Vector"]
     , importDecl_ (m "Data.Word")             & qualified haskellNS  & selecting  [i"Word16", i"Word32", i"Word64"]
     , importDecl_ (m "GHC.Enum")              & qualified haskellNS  & everything
