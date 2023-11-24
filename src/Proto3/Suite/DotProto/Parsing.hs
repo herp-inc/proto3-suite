@@ -203,12 +203,18 @@ floatLit :: ProtoParser Double
 floatLit = do sign <- char '-' $> negate <|> char '+' $> id <|> pure id
               sign <$> double
 
+messageLit :: ProtoParser ()
+messageLit = braces (many (identifierName *> symbol ":" *> value *> optional (symbol ";" <|> symbol ","))) $> ()
+
 value :: ProtoParser DotProtoValue
 value = try (BoolLit              <$> bool)
     <|> try (StringLit            <$> strLit)
     <|> try (FloatLit             <$> floatLit)
     <|> try (IntLit . fromInteger <$> integer)
     <|> try (Identifier           <$> identifier)
+    -- TODO: 現在のASTではmessageを表すことはできないので一旦 0 を返す
+    <|> try (IntLit 0             <$ messageLit)
+    -- TODO: 配列
 
 ----------------------------------------
 -- types
