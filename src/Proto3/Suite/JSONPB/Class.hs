@@ -11,6 +11,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE PackageImports #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 -- | Support for the "JSONPB" canonical JSON encoding described at
@@ -70,8 +71,11 @@ import qualified Data.Aeson                       as A (Encoding, FromJSON (..),
                                                         ToJSON (..), Value (..),
                                                         ToJSON1(..), FromJSON1(..),
                                                         ToJSONKey(..),
-                                                        decode, eitherDecode, json,
+                                                        decode, eitherDecode,
                                                         (.!=))
+#if !MIN_VERSION_aeson(2,2,0)
+import qualified Data.Aeson                       as A (json)
+#endif
 import qualified Data.Aeson.Encoding              as E
 import qualified Data.Aeson.Encoding.Internal     as E
 #if !MIN_VERSION_aeson(2,1,0)
@@ -80,7 +84,11 @@ import qualified Data.Aeson.Internal              as A (formatError, iparse)
 #if MIN_VERSION_aeson(2,0,0)
 import qualified Data.Aeson.Key                   as A
 #endif
-import qualified Data.Aeson.Parser                as A (eitherDecodeWith)
+#if MIN_VERSION_aeson(2,2,0)
+import qualified "attoparsec-aeson" Data.Aeson.Parser as A (eitherDecodeWith, json)
+#else
+import qualified "aeson" Data.Aeson.Parser        as A (eitherDecodeWith)
+#endif
 import qualified Data.Aeson.Types                 as A (Object, Pair, Parser,
                                                         Series,
                                                         explicitParseField,
@@ -132,6 +140,22 @@ keyFromText = A.fromText
 type Key = Text
 keyFromText :: Text -> Text
 keyFromText = id
+#endif
+
+#if MIN_VERSION_aeson(2,2,0)
+liftToJSON :: forall f a. (A.ToJSON1 f) => (a -> A.Value) -> ([a] -> A.Value) -> f a -> A.Value
+liftToJSON = A.liftToJSON $ const False
+liftToEncoding :: forall f a. (A.ToJSON1 f) => (a -> A.Encoding) -> ([a] -> A.Encoding) -> f a -> A.Encoding
+liftToEncoding = A.liftToEncoding $ const False
+liftParseJSON :: forall f a. (A.FromJSON1 f) => (A.Value -> A.Parser a) -> (A.Value -> A.Parser [a]) -> A.Value -> A.Parser (f a)
+liftParseJSON = A.liftParseJSON Nothing
+#else
+liftToJSON :: forall f a. (A.ToJSON1 f) => (a -> A.Value) -> ([a] -> A.Value) -> f a -> A.Value
+liftToJSON = A.liftToJSON
+liftToEncoding :: forall f a. (A.ToJSON1 f) => (a -> A.Encoding) -> ([a] -> A.Encoding) -> f a -> A.Encoding
+liftToEncoding = A.liftToEncoding
+liftParseJSON :: forall f a. (A.FromJSON1 f) => (A.Value -> A.Parser a) -> (A.Value -> A.Parser [a]) -> A.Value -> A.Parser (f a)
+liftParseJSON = A.liftParseJSON
 #endif
 
 -- * Typeclass definitions
@@ -588,11 +612,11 @@ instance A.ToJSONKey (Proto3.Suite.Types.String TS.ShortText) where
 #endif
 
 instance (A.ToJSONKey k, ToJSONPB k, ToJSONPB v) => ToJSONPB (M.Map k v) where
-  toJSONPB m opts = A.liftToJSON @(M.Map k) (`toJSONPB` opts) (A.Array . V.fromList . map (`toJSONPB` opts)) m
-  toEncodingPB m opts = A.liftToEncoding @(M.Map k) (`toEncodingPB` opts) (E.list (`toEncodingPB` opts)) m
+  toJSONPB m opts = liftToJSON @(M.Map k) (`toJSONPB` opts) (A.Array . V.fromList . map (`toJSONPB` opts)) m
+  toEncodingPB m opts = liftToEncoding @(M.Map k) (`toEncodingPB` opts) (E.list (`toEncodingPB` opts)) m
 
 instance (Ord k, A.FromJSONKey k, FromJSONPB k, FromJSONPB v) => FromJSONPB (M.Map k v) where
-  parseJSONPB = A.liftParseJSON @(M.Map k) parseJSONPB parseList
+  parseJSONPB = liftParseJSON @(M.Map k) parseJSONPB parseList
     where
       parseList (A.Array a) = traverse parseJSONPB (V.toList a)
       parseList v = A.typeMismatch "not a list" v
