@@ -12,15 +12,22 @@ module TestCodeGen where
 import           ArbitraryGeneratedTestTypes    ()
 import           Control.Applicative
 import           Control.Monad
+#ifdef SWAGGER
 import qualified Data.Aeson
+#endif
 import qualified Data.ByteString.Lazy           as LBS
 import           Data.Proxy                     (Proxy(..))
 import           Data.String                    (IsString)
+#ifdef SWAGGER
 import           Data.Swagger                   (ToSchema)
 import qualified Data.Swagger
+#endif
 import qualified Data.Text                      as T
-import           Data.Typeable                  (Typeable, splitTyConApp,
-                                                 tyConName, typeRep)
+import           Data.Typeable                  (Typeable, typeRep,
+#ifdef SWAGGER
+                                                 splitTyConApp, tyConName
+#endif
+                                                )
 import           Google.Protobuf.Timestamp      (Timestamp(..))
 import           Prelude                        hiding (FilePath)
 import           Proto3.Suite.Class             (def)
@@ -39,19 +46,23 @@ import qualified Turtle
 import qualified Turtle.Format                  as F
 import qualified TestProto
 import qualified TestProtoOneof
+#ifdef SWAGGER
 import qualified TestProtoWrappers
+#endif
 
 codeGenTests :: TestTree
 codeGenTests = testGroup "Code generator unit tests"
   [ jsonpbTests
-  , swaggerTests
   , hasDefaultTests
-  , swaggerWrapperFormat
   , pascalCaseMessageNames
   , camelCaseMessageFieldNames
   , don'tAlterEnumFieldNames
   , knownTypeMessages
   , pythonInteroperation
+#ifdef SWAGGER
+  , swaggerTests
+  , swaggerWrapperFormat
+#endif
   ]
 
 pythonInteroperation :: TestTree
@@ -67,6 +78,7 @@ pythonInteroperation = testGroup "Python interoperation" $ do
   direction <- [simpleEncodeDotProto, simpleDecodeDotProto]
   pure @[] (direction recStyle isPrefixedArg tt format)
 
+#ifdef SWAGGER
 swaggerWrapperFormat :: TestTree
 swaggerWrapperFormat = testGroup "Swagger Wrapper Format"
     [ expectSchema @TestProtoWrappers.TestDoubleValue
@@ -113,6 +125,7 @@ swaggerWrapperFormat = testGroup "Swagger Wrapper Format"
         wf = True
 #else
         wf = False
+#endif
 #endif
 
 knownTypeMessages :: TestTree
@@ -378,6 +391,7 @@ jsonpbTests = testGroup "JSONPB tests"
       ]
   ]
 
+#ifdef SWAGGER
 swaggerTests :: TestTree
 swaggerTests = testGroup "Swagger tests"
   [ schemaOf @TestProtoOneof.Something
@@ -390,6 +404,7 @@ swaggerTests = testGroup "Swagger tests"
       "{\"enum\":[\"DUMMY0\",\"DUMMY1\"],\"type\":\"string\"}"
 
   ]
+#endif
 
 hasDefaultTests :: TestTree
 hasDefaultTests = testGroup "Generic HasDefault"
@@ -456,6 +471,7 @@ decodesAs bs x = testProperty (testName "")  (eitherDecode bs === Right x)
       showString " == Right " .
       showsPrec 11 x
 
+#ifdef SWAGGER
 schemaOf ::
   forall a .
   (ToSchema a, Eq a, Show a, Typeable a) =>
@@ -470,3 +486,4 @@ schemaOf bs = testProperty (testName "") (lbsSchemaOf @a === bs)
 
 lbsSchemaOf :: forall a . ToSchema a => LBS.ByteString
 lbsSchemaOf = Data.Aeson.encode (Data.Swagger.toSchema (Proxy @a))
+#endif
