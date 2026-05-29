@@ -1737,6 +1737,46 @@ dotProtoServiceD stringType isPrefixed pkgSpec ctxt serviceIdent service = do
 
      let serverT = tyApp (HsTyCon (unqual_ serviceName))
                          [ serverRequestT, serverResponseT ]
+     
+     let mkHandlers clientStream serverStream = do
+          let (nameSuffix, kindC, handlerKindC, convertE) = case (clientStream, serverStream) of
+                  (NonStreaming, NonStreaming) -> ("normalHandlers", normalC, unaryHandlerC, convertServerHandlerE)
+                  (Streaming, NonStreaming) -> ("clientStreamingHandlers", clientStreamingC, clientStreamHandlerC, convertServerReaderHandlerE)
+                  (NonStreaming, Streaming) -> ("serverStreamingHandlers", serverStreamingC, serverStreamHandlerC, convertServerWriterHandlerE)
+                  (Streaming, Streaming) -> ("biDiStreamingHandlers", biDiStreamingC, biDiStreamHandlerC, convertServerRWHandlerE)
+
+          handlersFuncName <- prefixedFieldName serviceName nameSuffix
+
+          let serviceHandlersTypeD = HsTypeSig defaultSrcLoc [ HsIdent handlersFuncName ]
+                            (HsQualType [] (HsTyFun serverT (HsTyApp (HsTyCon (unqual_ "[]")) (HsTyApp handlerC kindC))))
+
+          let serviceHandlersD = HsFunBind [handlersFuncD]
+                where
+                  handlersFuncD =
+                    match_ (HsIdent handlersFuncName)
+                            [ HsPRec (unqual_ serviceName)
+                                    [ HsPFieldPat (unqual_ methodName) (HsPVar (HsIdent methodName))
+                                    | (_, methodName, _, _, _) <- fieldsD
+                                    ]
+                            ]
+                            (HsUnGuardedRhs serverHandlersE)
+                            []
+
+                  handlerE handlerC adapterE methodName hsName =
+                      apply handlerC [ apply methodNameC [ str_ methodName ]
+                                      , apply adapterE [ uvar_ hsName ]
+                                      ]
+
+                  serverHandlersE = HsList [ handlerE handlerKindC convertE endpointName hsName
+                                    | (endpointName, hsName, cs, ss, _) <- fieldsD, cs == clientStream, ss == serverStream
+                                    ]
+
+          pure (handlersFuncName, serviceHandlersTypeD, serviceHandlersD) 
+      
+     (normalHandlersFuncName, serviceNormalHandlersTypeD, serviceNormalHandlersD) <- mkHandlers NonStreaming NonStreaming
+     (clientStreamHandlersFuncName, serviceClientStreamHandlersTypeD, serviceClientStreamHandlersD) <- mkHandlers Streaming NonStreaming
+     (serverStreamHandlersFuncName, serviceServerStreamHandlersTypeD, serviceServerStreamHandlersD) <- mkHandlers NonStreaming Streaming
+     (biDiStreamHandlersFuncName, serviceBiDiStreamHandlersTypeD, serviceBiDiStreamHandlersD) <- mkHandlers Streaming Streaming
 
      let serviceServerTypeD =
             HsTypeSig defaultSrcLoc [ HsIdent serverFuncName ]
@@ -1746,10 +1786,7 @@ dotProtoServiceD stringType isPrefixed pkgSpec ctxt serviceIdent service = do
            where
              serverFuncD =
                match_ (HsIdent serverFuncName)
-                      [ HsPRec (unqual_ serviceName)
-                               [ HsPFieldPat (unqual_ methodName) (HsPVar (HsIdent methodName))
-                               | (_, methodName, _, _, _) <- fieldsD
-                               ]
+                      [ patVar "service"
                       , HsPApp (unqual_ "ServiceOptions")
                                [ patVar "serverHost"
                                , patVar "serverPort"
@@ -1766,35 +1803,17 @@ dotProtoServiceD stringType isPrefixed pkgSpec ctxt serviceIdent service = do
                       (HsUnGuardedRhs (apply serverLoopE [ serverOptsE ]))
                       []
 
-             handlerE handlerC adapterE methodName hsName =
-                 apply handlerC [ apply methodNameC [ str_ methodName ]
-                                , apply adapterE [ uvar_ hsName ]
-                                ]
-
              update u v = HsFieldUpdate (unqual_ u) (uvar_ v)
 
              serverOptsE = HsRecUpdate defaultOptionsE
                  [ HsFieldUpdate (grpcName "optNormalHandlers") $
-                       HsList [ handlerE unaryHandlerC convertServerHandlerE endpointName hsName
-                              | (endpointName, hsName, NonStreaming, NonStreaming, _) <- fieldsD
-                              ]
-
+                       HsApp (uvar_ normalHandlersFuncName) (uvar_ "service")
                  , HsFieldUpdate (grpcName "optClientStreamHandlers") $
-                       HsList [ handlerE clientStreamHandlerC convertServerReaderHandlerE endpointName hsName
-                              | (endpointName, hsName, Streaming, NonStreaming, _) <- fieldsD
-                              ]
-
-
+                       HsApp (uvar_ clientStreamHandlersFuncName) (uvar_ "service")
                  , HsFieldUpdate (grpcName "optServerStreamHandlers") $
-                       HsList [ handlerE serverStreamHandlerC convertServerWriterHandlerE endpointName hsName
-                              | (endpointName, hsName, NonStreaming, Streaming, _) <- fieldsD
-                              ]
-
-
+                       HsApp (uvar_ serverStreamHandlersFuncName) (uvar_ "service")
                  , HsFieldUpdate (grpcName "optBiDiStreamHandlers") $
-                       HsList [ handlerE biDiStreamHandlerC convertServerRWHandlerE endpointName hsName
-                              | (endpointName, hsName, Streaming, Streaming, _) <- fieldsD
-                              ]
+                       HsApp (uvar_ biDiStreamHandlersFuncName) (uvar_ "service")
 
                  , update "optServerHost" "serverHost"
                  , update "optServerPort" "serverPort"
@@ -1836,6 +1855,17 @@ dotProtoServiceD stringType isPrefixed pkgSpec ctxt serviceIdent service = do
      pure [ HsDataDecl defaultSrcLoc  [] (HsIdent serviceName)
                 [ HsIdent "request", HsIdent "response" ]
                 [ conDecl ] defaultServiceDeriving
+          , serviceNormalHandlersTypeD
+          , serviceNormalHandlersD
+
+          , serviceClientStreamHandlersTypeD
+          , serviceClientStreamHandlersD
+
+          , serviceServerStreamHandlersTypeD
+          , serviceServerStreamHandlersD
+
+          , serviceBiDiStreamHandlersTypeD
+          , serviceBiDiStreamHandlersD
 
           , serviceServerTypeD
           , serviceServerD
@@ -1869,7 +1899,7 @@ convertServerRWHandlerE     = HsVar (grpcName "convertGeneratedServerRWHandler")
 clientRegisterMethodE       = HsVar (grpcName "clientRegisterMethod")
 clientRequestE              = HsVar (grpcName "clientRequest")
 
-biDiStreamingC, serverStreamingC, clientStreamingC, normalC, serviceOptionsC,
+biDiStreamingC, serverStreamingC, clientStreamingC, normalC, serviceOptionsC, handlerC,
   ioActionT, serverRequestT, serverResponseT, clientRequestT, clientResultT,
   ioT, grpcClientT :: HsType
 biDiStreamingC   = HsTyCon (Qual (Module "'HsGRPC") (HsIdent "BiDiStreaming"))
@@ -1877,6 +1907,7 @@ serverStreamingC = HsTyCon (Qual (Module "'HsGRPC") (HsIdent "ServerStreaming"))
 clientStreamingC = HsTyCon (Qual (Module "'HsGRPC") (HsIdent "ClientStreaming"))
 normalC          = HsTyCon (Qual (Module "'HsGRPC") (HsIdent "Normal"))
 serviceOptionsC  = HsTyCon (Qual (Module "HsGRPC") (HsIdent "ServiceOptions"))
+handlerC         = HsTyCon (Qual (Module "HsGRPC") (HsIdent "Handler"))
 serverRequestT   = HsTyCon (grpcName "ServerRequest")
 serverResponseT  = HsTyCon (grpcName "ServerResponse")
 clientRequestT   = HsTyCon (grpcName "ClientRequest")
